@@ -1,0 +1,14 @@
+# Go
+/bin
+/dist
+*.exe
+
+# Node/Next.js
+node_modules/
+.next/
+.env
+.env.local
+
+# Flutter
+/build
+.dart_tool/
