@@ -7,34 +7,29 @@ function App() {
   const [patients, setPatients] = useState([])
   const [loading, setLoading] = useState(true)
   
-  // --- STATE MODAL FORM (INPUT/EDIT) ---
+  // --- STATE MODAL PASIEN (INPUT/EDIT) ---
   const [showModal, setShowModal] = useState(false)
   const [isEditMode, setIsEditMode] = useState(false) 
   const [editId, setEditId] = useState(null)          
-  
-  const [formData, setFormData] = useState({
-    name: '',
-    nik: '',
-    gender: 'M',
-    birth_date: '',
-    address: ''
-  })
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [formData, setFormData] = useState({ name: '', nik: '', gender: 'M', birth_date: '', address: '' })
 
-  // --- STATE UI BARU (TOAST & DELETE MODAL) ---
-  const [toast, setToast] = useState({ show: false, message: '', type: 'success' }) // Type: success | error
+  // --- STATE REKAM MEDIS (IOT SYNC) ---
+  const [selectedPatient, setSelectedPatient] = useState(null) 
+  const [records, setRecords] = useState([]) 
+  const [isSyncing, setIsSyncing] = useState(false) // Indikator sensor aktif
+
+  // --- STATE UI (TOAST & DELETE) ---
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' })
   const [deleteModal, setDeleteModal] = useState({ show: false, id: null, name: '' })
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   // --- HELPER: TAMPILKAN TOAST ---
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type })
-    // Hilang otomatis setelah 3 detik
-    setTimeout(() => {
-      setToast((prev) => ({ ...prev, show: false }))
-    }, 3000)
+    setTimeout(() => setToast((prev) => ({ ...prev, show: false })), 3000)
   }
 
-  // --- 1. FUNGSI AMBIL DATA ---
+  // --- 1. AMBIL DATA AWAL (DASHBOARD & LIST) ---
   const refreshData = () => {
     const fetchStats = axios.get('/api/v1/dashboard/stats')
     const fetchPatients = axios.get('/api/v1/patients')
@@ -45,11 +40,9 @@ function App() {
         setPatients(patientsRes.data || []) 
         setLoading(false)
       })
-      .catch(err => {
-        console.error("Error fetching data:", err)
+      .catch(() => {
         setLoading(false)
-        setPatients([]) 
-        showToast("Gagal mengambil data dari server", "error")
+        showToast("Gagal sinkronisasi server", "error")
       })
   }
 
@@ -57,12 +50,36 @@ function App() {
     refreshData()
   }, [])
 
-  // --- 2. HANDLE FORM INPUT ---
+  // --- 2. LOGIKA AUTO-SYNC IOT (POLLING SETIAP 5 DETIK) ---
+  useEffect(() => {
+    let interval;
+    if (selectedPatient) {
+      setIsSyncing(true);
+      // Fungsi untuk tarik data terbaru
+      const fetchLatestRecords = () => {
+        axios.get(`/api/v1/patients/${selectedPatient.id}/scan`)
+          .then(res => {
+            setRecords(res.data || []);
+            // Update stats dashboard juga siapa tahu ada status Osteoporosis baru
+            axios.get('/api/v1/dashboard/stats').then(s => setStats(s.data));
+          })
+          .catch(err => console.error("Sync error:", err));
+      };
+
+      fetchLatestRecords(); // Jalankan sekali saat klik
+      interval = setInterval(fetchLatestRecords, 5000); // Lalu cek tiap 5 detik
+    } else {
+      setIsSyncing(false);
+    }
+
+    return () => clearInterval(interval); // Bersihkan saat ganti pasien atau tutup
+  }, [selectedPatient]);
+
+  // --- 3. CRUD PASIEN ---
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
   }
 
-  // --- 3. BUKA MODAL ---
   const openModalAdd = () => {
     setIsEditMode(false)
     setEditId(null)
@@ -70,300 +87,226 @@ function App() {
     setShowModal(true)
   }
 
-  const openModalEdit = (patient) => {
+  const openModalEdit = (p) => {
     setIsEditMode(true)
-    setEditId(patient.id)
-    setFormData({
-      name: patient.name,
-      nik: patient.nik,
-      gender: patient.gender,
-      birth_date: patient.birth_date ? patient.birth_date.split('T')[0] : '',
-      address: patient.address
-    })
+    setEditId(p.id)
+    setFormData({ ...p, birth_date: p.birth_date ? p.birth_date.split('T')[0] : '' })
     setShowModal(true)
   }
 
-  // --- 4. SIMPAN DATA (CREATE / UPDATE) ---
-  const handleSubmit = async (e) => {
+  const handleSubmitPatient = async (e) => {
     e.preventDefault()
     setIsSubmitting(true)
-    
     try {
       if (isEditMode) {
         await axios.put(`/api/v1/patients/${editId}`, formData)
-        showToast("✏️ Data pasien berhasil diperbarui!", "success")
+        showToast("✏️ Data pasien diperbarui!", "success")
       } else {
         await axios.post('/api/v1/patients', formData)
-        showToast("✅ Pasien baru berhasil ditambahkan!", "success")
+        showToast("✅ Pasien berhasil didaftarkan!", "success")
       }
-
       setShowModal(false)
       refreshData()
-      
     } catch (error) {
-      console.error(error)
-      
-      // VALIDASI ERROR DARI BACKEND
-      const errMsg = error.response?.data?.error || JSON.stringify(error.response?.data) || error.message;
-      
-      if (errMsg && (errMsg.includes("duplicate") || errMsg.includes("unique"))) {
-        showToast("⚠️ NIK sudah terdaftar! Gunakan NIK lain.", "error")
-      } else {
-        showToast("❌ Terjadi kesalahan server.", "error")
-      }
+      showToast("Gagal menyimpan data", "error")
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  // --- 5. LOGIKA HAPUS (DELETE) ---
-  // Tahap 1: Buka Modal Konfirmasi
-  const confirmDelete = (id, name) => {
-    setDeleteModal({ show: true, id, name })
-  }
-
-  // Tahap 2: Eksekusi Hapus ke Backend
   const handleDeleteExecute = async () => {
     try {
       await axios.delete(`/api/v1/patients/${deleteModal.id}`)
-      showToast("🗑️ Data berhasil dihapus permanen.", "success")
-      setDeleteModal({ show: false, id: null, name: '' }) // Tutup modal
+      showToast("🗑️ Data berhasil dihapus.", "success")
+      setDeleteModal({ show: false })
+      setSelectedPatient(null)
       refreshData()
-    } catch (error) {
-      console.error(error)
-      showToast("❌ Gagal menghapus data.", "error")
-    }
+    } catch (err) { showToast("Gagal menghapus", "error") }
   }
 
-  if (loading) return <div className="flex h-screen items-center justify-center bg-gray-100 font-bold text-gray-500">Loading Dashboard...</div>
+  if (loading) return <div className="flex h-screen items-center justify-center font-bold text-gray-400 animate-pulse">Inisialisasi Edora IoT...</div>
 
   return (
-    <div className="min-h-screen bg-gray-100 p-8 font-sans relative overflow-x-hidden">
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans">
       
-      {/* --- KOMPONEN TOAST NOTIFICATION --- */}
+      {/* TOAST NOTIFICATION */}
       <div className={`fixed top-5 right-5 z-[100] transition-all duration-500 transform ${toast.show ? 'translate-x-0 opacity-100' : 'translate-x-10 opacity-0 pointer-events-none'}`}>
-        <div className={`flex items-center gap-3 px-6 py-4 rounded-xl shadow-2xl border-l-4 ${toast.type === 'success' ? 'bg-white border-green-500 text-green-800' : 'bg-white border-red-500 text-red-800'}`}>
-          <div className={`p-2 rounded-full ${toast.type === 'success' ? 'bg-green-100' : 'bg-red-100'}`}>
-            {toast.type === 'success' ? '✔' : '✖'}
-          </div>
-          <div>
-            <h4 className="font-bold text-sm">{toast.type === 'success' ? 'Berhasil' : 'Gagal'}</h4>
-            <p className="text-sm font-medium opacity-90">{toast.message}</p>
-          </div>
+        <div className={`px-6 py-4 rounded-2xl shadow-2xl border-l-4 bg-white ${toast.type === 'success' ? 'border-green-500 text-green-800' : 'border-red-500 text-red-800'}`}>
+          <p className="font-bold text-sm">{toast.message}</p>
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* HEADER */}
-        <header className="mb-8 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div>
-            <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Edora Dashboard</h1>
-            <p className="text-slate-500 font-medium">Monitoring Kesehatan Tulang Real-time</p>
-          </div>
-          <div className="flex gap-3">
-             <button onClick={refreshData} className="px-4 py-2 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 text-sm font-bold text-gray-600 shadow-sm transition active:scale-95">
-                🔄 Refresh
-             </button>
-             <div className="bg-emerald-100 px-4 py-2 rounded-xl text-sm font-bold text-emerald-700 flex items-center gap-2 shadow-sm border border-emerald-200">
-               <span className="relative flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                </span>
-               System Online
-             </div>
-          </div>
-        </header>
-        
-        {/* STATS CARDS */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition">
-            <div className="flex items-center gap-4 mb-2">
-              <div className="p-3 bg-blue-100 text-blue-600 rounded-lg">📊</div>
-              <h2 className="text-gray-500 text-sm uppercase font-bold tracking-wider">Total Pasien Hari Ini</h2>
+        {/* KOLOM KIRI: DASHBOARD & TABEL */}
+        <div className="lg:col-span-2 space-y-8">
+          
+          <header className="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+              <h1 className="text-3xl font-black text-slate-800 tracking-tight italic">EDORA <span className="text-blue-600 not-italic">v2.0</span></h1>
+              <p className="text-slate-500 font-medium">Bone Health IoT Ecosystem</p>
             </div>
-            <p className="text-5xl font-extrabold text-slate-800">{stats?.totalPatientsToday || 0}</p>
-          </div>
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition">
-            <div className="flex items-center gap-4 mb-2">
-              <div className="p-3 bg-red-100 text-red-600 rounded-lg">⚠️</div>
-              <h2 className="text-gray-500 text-sm uppercase font-bold tracking-wider">Risiko Osteoporosis</h2>
+            <div className="flex gap-2">
+              <button onClick={openModalAdd} className="bg-slate-900 hover:bg-black text-white px-6 py-3 rounded-2xl font-bold text-sm shadow-xl transition active:scale-95 flex items-center gap-2">
+                <span>+</span> Daftarkan Pasien
+              </button>
             </div>
-            <p className="text-5xl font-extrabold text-red-500">
-              {stats?.osteoporosisCases || 0}
-            </p>
-          </div>
-        </div>
+          </header>
 
-        {/* TABEL DATA */}
-        <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-gray-200">
-          <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex flex-col sm:flex-row justify-between items-center gap-4">
-            <h2 className="text-xl font-bold text-slate-800">📋 Daftar Pasien Terdaftar</h2>
-            <button 
-              onClick={openModalAdd} 
-              className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition shadow-lg shadow-blue-200 active:scale-95 flex items-center gap-2"
-            >
-              <span>+</span> Input Pasien Baru
-            </button>
+          {/* STATS */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+              <h2 className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Total Monitoring Hari Ini</h2>
+              <p className="text-4xl font-black text-slate-800">{stats?.totalPatientsToday || 0}</p>
+            </div>
+            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+              <h2 className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Terdeteksi Osteoporosis</h2>
+              <p className="text-4xl font-black text-red-500">{stats?.osteoporosisCases || 0}</p>
+            </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-slate-50 text-slate-500 uppercase text-xs font-bold tracking-wider border-b border-gray-100">
-                <tr>
-                  <th className="p-4 pl-6">Nama Pasien</th>
-                  <th className="p-4">NIK</th>
-                  <th className="p-4">Tgl Lahir</th>
-                  <th className="p-4">Gender</th>
-                  <th className="p-4">Alamat</th>
-                  <th className="p-4 text-center">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {patients?.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-50 transition group">
-                    <td className="p-4 pl-6">
-                      <div className="font-bold text-slate-700">{p.name}</div>
-                    </td>
-                    <td className="p-4">
-                      <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs font-mono font-medium">{p.nik}</span>
-                    </td>
-                    <td className="p-4 text-gray-500 text-sm font-medium">
-                      {p.birth_date ? new Date(p.birth_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
-                    </td>
-                    <td className="p-4">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold tracking-wide ${p.gender === 'M' ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-pink-50 text-pink-600 border border-pink-100'}`}>
-                        {p.gender === 'M' ? 'PRIA' : 'WANITA'}
-                      </span>
-                    </td>
-                    <td className="p-4 text-gray-500 text-sm max-w-[200px] truncate" title={p.address}>{p.address}</td>
-                    
-                    <td className="p-4 flex justify-center gap-2">
-                      <button 
-                        onClick={() => openModalEdit(p)}
-                        className="p-2 bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-yellow-50 hover:text-yellow-600 hover:border-yellow-200 transition shadow-sm"
-                        title="Edit Data"
-                      >
-                        ✏️
-                      </button>
-                      <button 
-                        onClick={() => confirmDelete(p.id, p.name)}
-                        className="p-2 bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition shadow-sm"
-                        title="Hapus Data"
-                      >
-                        🗑️
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                
-                {(!patients || patients.length === 0) && (
+
+          {/* TABEL PASIEN */}
+          <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 overflow-hidden">
+            <div className="p-6 bg-slate-50/50 border-b border-slate-100 flex justify-between items-center">
+              <h2 className="font-bold text-slate-700">📋 Database Pasien</h2>
+              <span className="text-[10px] font-bold text-slate-400">TOTAL: {patients.length}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50/30 text-slate-400 text-[9px] font-black uppercase tracking-[0.2em]">
                   <tr>
-                    <td colSpan="6" className="p-12 text-center">
-                      <div className="flex flex-col items-center justify-center text-gray-400">
-                        <span className="text-4xl mb-2">📂</span>
-                        <p className="font-medium">Belum ada data pasien.</p>
-                      </div>
-                    </td>
+                    <th className="p-5">Informasi Pasien</th>
+                    <th className="p-5">Gender</th>
+                    <th className="p-5 text-center">Aksi</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {patients.map(p => (
+                    <tr 
+                      key={p.id} 
+                      onClick={() => setSelectedPatient(p)}
+                      className={`hover:bg-blue-50/40 transition cursor-pointer group ${selectedPatient?.id === p.id ? 'bg-blue-50' : ''}`}
+                    >
+                      <td className="p-5">
+                        <div className="font-bold text-slate-700 group-hover:text-blue-600 transition">{p.name}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">NIK: {p.nik}</div>
+                      </td>
+                      <td className="p-5">
+                        <span className={`px-3 py-1 rounded-lg text-[9px] font-black ${p.gender === 'M' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
+                          {p.gender === 'M' ? 'MALE' : 'FEMALE'}
+                        </span>
+                      </td>
+                      <td className="p-5 flex justify-center gap-3">
+                        <button onClick={(e) => { e.stopPropagation(); openModalEdit(p); }} className="opacity-40 hover:opacity-100 transition">✏️</button>
+                        <button onClick={(e) => { e.stopPropagation(); setDeleteModal({ show: true, id: p.id, name: p.name }); }} className="opacity-40 hover:opacity-100 transition hover:text-red-500">🗑️</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* KOLOM KANAN: PANEL MONITORING IOT */}
+        <div className="lg:col-span-1">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-200 h-full min-h-[600px] sticky top-8 flex flex-col overflow-hidden">
+            {!selectedPatient ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-4">
+                <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center text-4xl animate-bounce">📡</div>
+                <h3 className="font-black text-slate-800">Menunggu Koneksi...</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">Pilih pasien dari daftar untuk mulai menerima data dari sensor IoT Edora.</p>
+              </div>
+            ) : (
+              <>
+                <div className="p-8 border-b bg-slate-900 text-white relative overflow-hidden">
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="h-2 w-2 rounded-full bg-emerald-400 animate-ping"></div>
+                      <span className="text-[9px] font-black tracking-widest text-emerald-400 uppercase">Live Monitoring</span>
+                    </div>
+                    <h3 className="text-2xl font-black italic">{selectedPatient.name}</h3>
+                    <p className="text-[10px] opacity-60 mt-1 font-mono">{selectedPatient.id}</p>
+                  </div>
+                  <div className="absolute -right-4 -bottom-4 text-7xl opacity-10">🦴</div>
+                </div>
+
+                <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-slate-50/30">
+                  <div className="flex justify-between items-center px-2">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Aktivitas Sensor</h4>
+                    {isSyncing && <span className="text-[9px] font-bold text-blue-500 animate-pulse">SINKRONISASI...</span>}
+                  </div>
+                  
+                  {records.length === 0 ? (
+                    <div className="text-center py-20 border-2 border-dashed border-slate-200 rounded-[2rem] text-slate-300 text-xs italic font-medium p-4">
+                      Belum ada data masuk.<br/>Silakan aktifkan alat scan pada pasien.
+                    </div>
+                  ) : (
+                    records.map(r => (
+                      <div key={r.id} className="p-6 rounded-[2rem] bg-white shadow-sm border border-slate-100 hover:shadow-md transition group">
+                        <div className="flex justify-between items-start mb-3">
+                          <span className="text-[10px] font-bold text-slate-400">
+                            {new Date(r.scan_date).toLocaleTimeString('id-ID')} - {new Date(r.scan_date).toLocaleDateString('id-ID')}
+                          </span>
+                          <span className={`text-[9px] font-black px-3 py-1 rounded-full ${r.diagnosis === 'Osteoporosis' ? 'bg-red-500 text-white shadow-lg shadow-red-100' : r.diagnosis === 'Osteopenia' ? 'bg-yellow-400 text-white shadow-lg shadow-yellow-100' : 'bg-emerald-500 text-white shadow-lg shadow-emerald-100'}`}>
+                            {r.diagnosis.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="text-4xl font-black text-slate-800 tracking-tighter">
+                          {r.t_score} <span className="text-sm font-bold text-slate-300 ml-1">T-Score</span>
+                        </div>
+                        {r.notes && (
+                          <div className="mt-4 p-3 bg-slate-50 rounded-xl text-[11px] text-slate-500 italic border-l-2 border-slate-200">
+                            "{r.notes}"
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      {/* --- MODAL FORM INPUT/EDIT --- */}
+      {/* --- MODAL FORM PASIEN --- */}
       {showModal && (
-        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-8 transform transition-all scale-100 border border-gray-200">
-            <div className="flex justify-between items-center mb-6">
-               <h2 className="text-2xl font-bold text-slate-800">
-                {isEditMode ? '✏️ Edit Informasi' : '➕ Tambah Pasien'}
-              </h2>
-              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
-            </div>
-            
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-2">NIK (Identitas)</label>
-                  <input 
-                    required
-                    type="text" 
-                    name="nik"
-                    value={formData.nik}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                    placeholder="3201xxxxxx"
-                  />
-                </div>
-                <div>
-                   <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Nama Lengkap</label>
-                  <input 
-                    required
-                    type="text" 
-                    name="name"
-                    value={formData.name}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                    placeholder="Sesuai KTP"
-                  />
-                </div>
+        <div className="fixed inset-0 bg-slate-900/70 z-[110] backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] p-10 w-full max-w-md shadow-2xl animate-in zoom-in duration-300">
+            <h2 className="text-2xl font-black text-slate-800 mb-8 tracking-tight">
+              {isEditMode ? 'Edit Profil Pasien' : 'Registrasi Pasien Baru'}
+            </h2>
+            <form onSubmit={handleSubmitPatient} className="space-y-5">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-2">NIK Identitas</label>
+                <input required name="nik" value={formData.nik} onChange={handleInputChange} placeholder="Masukkan 16 digit NIK" className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition font-medium" />
               </div>
-
-              <div className="grid grid-cols-2 gap-5">
-                <div>
-                   <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Tanggal Lahir</label>
-                  <input 
-                    required
-                    type="date" 
-                    name="birth_date"
-                    value={formData.birth_date}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none transition text-gray-700"
-                  />
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Nama Lengkap</label>
+                <input required name="name" value={formData.name} onChange={handleInputChange} placeholder="Nama sesuai KTP" className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition font-medium" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Tgl Lahir</label>
+                  <input required type="date" name="birth_date" value={formData.birth_date} onChange={handleInputChange} className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition" />
                 </div>
-                <div>
-                   <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Gender</label>
-                  <select 
-                    name="gender"
-                    value={formData.gender}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white transition"
-                  >
-                    <option value="M">Laki-laki</option>
-                    <option value="F">Perempuan</option>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Gender</label>
+                  <select name="gender" value={formData.gender} onChange={handleInputChange} className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none bg-white focus:ring-2 focus:ring-blue-500 transition">
+                    <option value="M">Pria</option>
+                    <option value="F">Wanita</option>
                   </select>
                 </div>
               </div>
-
-              <div>
-                 <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Alamat Domisili</label>
-                <textarea 
-                  name="address"
-                  value={formData.address}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                  rows="3"
-                  placeholder="Jalan, No Rumah, RT/RW..."
-                ></textarea>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-2">Alamat Domisili</label>
+                <textarea name="address" value={formData.address} onChange={handleInputChange} placeholder="Alamat lengkap..." className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition h-24" />
               </div>
-
-              <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-gray-100">
-                <button 
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="px-6 py-2.5 text-gray-600 hover:bg-gray-100 rounded-xl font-bold text-sm transition"
-                  disabled={isSubmitting}
-                >
-                  Batal
-                </button>
-                <button 
-                  type="submit"
-                  disabled={isSubmitting}
-                  className={`px-8 py-2.5 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-200 transition transform hover:-translate-y-1 disabled:opacity-50 disabled:transform-none ${isEditMode ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-blue-600 hover:bg-blue-700'}`}
-                >
-                  {isSubmitting ? 'Memproses...' : (isEditMode ? 'Simpan Perubahan' : 'Simpan Data')}
+              <div className="flex gap-4 pt-6">
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-4 font-bold text-slate-400 transition hover:text-slate-600">Batal</button>
+                <button type="submit" disabled={isSubmitting} className="flex-[2] py-4 bg-slate-900 text-white rounded-[1.25rem] font-black shadow-2xl shadow-slate-200 hover:bg-black active:scale-95 transition">
+                  {isSubmitting ? 'MEMPROSES...' : 'KONFIRMASI DATA'}
                 </button>
               </div>
             </form>
@@ -371,32 +314,16 @@ function App() {
         </div>
       )}
 
-      {/* --- MODAL KONFIRMASI DELETE (BARU) --- */}
+      {/* --- MODAL DELETE --- */}
       {deleteModal.show && (
-        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-[60] backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 text-center border border-gray-200">
-            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <span className="text-3xl">🗑️</span>
-            </div>
-            <h3 className="text-xl font-bold text-gray-800 mb-2">Hapus Data?</h3>
-            <p className="text-gray-500 text-sm mb-6">
-              Anda yakin ingin menghapus data pasien <br/>
-              <span className="font-bold text-gray-800">"{deleteModal.name}"</span>?
-              <br/>Tindakan ini tidak bisa dibatalkan.
-            </p>
-            <div className="flex gap-3 justify-center">
-              <button 
-                onClick={() => setDeleteModal({ show: false, id: null, name: '' })}
-                className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-sm transition"
-              >
-                Batal
-              </button>
-              <button 
-                onClick={handleDeleteExecute}
-                className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold text-sm shadow-lg shadow-red-200 transition"
-              >
-                Ya, Hapus
-              </button>
+        <div className="fixed inset-0 bg-slate-900/60 z-[130] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] p-8 w-full max-w-xs text-center shadow-2xl">
+            <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4">⚠️</div>
+            <h3 className="font-extrabold text-slate-800 text-lg italic uppercase tracking-tighter">Hapus Pasien?</h3>
+            <p className="text-xs text-slate-400 mt-2 mb-8 font-medium">Seluruh data riwayat scan pasien <span className="text-slate-800 font-bold">{deleteModal.name}</span> akan hilang permanen.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteModal({ show: false })} className="flex-1 py-3 text-slate-400 font-bold text-xs">Batal</button>
+              <button onClick={handleDeleteExecute} className="flex-1 py-3 bg-red-500 text-white rounded-xl font-bold text-xs shadow-lg shadow-red-100">Ya, Hapus</button>
             </div>
           </div>
         </div>
