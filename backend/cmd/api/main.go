@@ -1,98 +1,90 @@
 package main
 
 import (
-    "context"
-    "encoding/json"
-    "fmt"
-    "log"
-    "os"
-    "path/filepath"
-    "time"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
 
-    "edora/backend/internal/handler"
-    "edora/backend/internal/repository"
-    "edora/backend/internal/service"
-    "edora/backend/internal/store"
-    "edora/backend/pkg/database"
+	"edora/backend/internal/handler"
+	"edora/backend/internal/store"
+	"edora/backend/pkg/database"
 
-    "github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2"
 )
 
 func main() {
-    // Load envs
-    dbURL := os.Getenv("DB_URL")
-    if dbURL == "" {
-        dbURL = "postgres://user:pass@db:5432/appdb"
-    }
-    redisAddr := os.Getenv("REDIS_ADDR")
-    if redisAddr == "" {
-        redisAddr = "redis:6379"
-    }
+	// Load envs
+	dbURL := os.Getenv("DB_URL")
+	if dbURL == "" {
+		dbURL = "postgres://user:pass@db:5432/appdb"
+	}
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "redis:6379"
+	}
 
-    ctx := context.Background()
+	ctx := context.Background()
 
-    // Connect to Postgres (stubbed in this build)
-    pgconn, err := database.Connect(ctx, dbURL)
-    if err != nil {
-        log.Printf("postgres connect error: %v", err)
-    }
+	// Connect to Postgres (stubbed in this build)
+	pgconn, err := database.Connect(ctx, dbURL)
+	if err != nil {
+		log.Printf("postgres connect error: %v", err)
+	}
 
-    // Redis/client is optional; we run without Redis in smoke tests.
+	// Redis/client is optional; we run without Redis in smoke tests.
 
-    // Initialize store (file-based) for users/readings
-    exePath, _ := os.Executable()
-    exeDir := filepath.Dir(exePath)
-    dataDir := filepath.Join(exeDir, "data")
-    st, serr := store.New(dataDir)
-    if serr != nil {
-        log.Printf("store init error: %v", serr)
-    }
+	// Initialize store (file-based) for users/readings
+	exePath, _ := os.Executable()
+	exeDir := filepath.Dir(exePath)
+	dataDir := filepath.Join(exeDir, "data")
+	st, serr := store.New(dataDir)
+	if serr != nil {
+		log.Printf("store init error: %v", serr)
+	}
 
-    // Repositories and services
-    prodRepo := repository.NewProductRepository(pgconn)
-    prodSvc := service.NewProductService(prodRepo, nil)
+	app := fiber.New()
 
-    app := fiber.New()
+	// auth & dashboard handlers (file-store backed)
+	auth := handler.NewAuthHandler(st)
+	dash := handler.NewDashboardHandler(st, auth)
 
-    h := handler.NewHandler(prodSvc)
+	api := app.Group("/api/v1")
+	api.Post("/login", auth.Login)
+	api.Get("/dashboard", dash.GetDashboard)
+	api.Get("/users", dash.GetUsers)
+	api.Get("/debug/users", func(c *fiber.Ctx) error {
+		us := st.Users()
+		return c.JSON(us)
+	})
+	api.Post("/debug/users", func(c *fiber.Ctx) error {
+		us := st.Users()
+		return c.JSON(us)
+	})
+	// product APIs removed per refactor
 
-    // auth & dashboard handlers (file-store backed)
-    auth := handler.NewAuthHandler(st)
-    dash := handler.NewDashboardHandler(st, auth)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 
-    api := app.Group("/api/v1")
-    api.Post("/login", auth.Login)
-    api.Get("/dashboard", dash.GetDashboard)
-    api.Get("/users", dash.GetUsers)
-    api.Get("/debug/users", func(c *fiber.Ctx) error {
-        us := st.Users()
-        return c.JSON(us)
-    })
-    api.Post("/debug/users", func(c *fiber.Ctx) error {
-        us := st.Users()
-        return c.JSON(us)
-    })
-    api.Get("/products", h.GetProducts)
+	// Print simple health info
+	info := map[string]string{"status": "ok", "port": port}
+	b, _ := json.Marshal(info)
+	fmt.Printf("Starting backend: %s\n", string(b))
 
-    port := os.Getenv("PORT")
-    if port == "" {
-        port = "8080"
-    }
+	// Start server
+	go func() {
+		if err := app.Listen(":" + port); err != nil {
+			log.Fatalf("failed to start server: %v", err)
+		}
+	}()
 
-    // Print simple health info
-    info := map[string]string{"status": "ok", "port": port}
-    b, _ := json.Marshal(info)
-    fmt.Printf("Starting backend: %s\n", string(b))
-
-    // Start server
-    go func() {
-        if err := app.Listen(":" + port); err != nil {
-            log.Fatalf("failed to start server: %v", err)
-        }
-    }()
-
-    // Block until terminated or error
-    for {
-        time.Sleep(10 * time.Second)
-    }
+	// Block until terminated or error
+	for {
+		time.Sleep(10 * time.Second)
+	}
 }
