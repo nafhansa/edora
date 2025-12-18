@@ -2,42 +2,70 @@ package repository
 
 import (
 	"context"
-	"crypto/rand" // Tambahan untuk random ID
+	"crypto/rand"
 	"database/sql"
-	"encoding/hex" // Tambahan untuk random ID
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
+	"sync" // Tambah sync untuk keamanan data
+	"time"
 
 	"edora/backend/internal/models"
 )
 
 type ReadingRepository struct {
 	db interface{}
+	// --- SMART MOCK STORAGE ---
+	mu           sync.Mutex
+	mockReadings []models.Reading
 }
 
 func NewReadingRepository(db interface{}) *ReadingRepository {
-	return &ReadingRepository{db: db}
+	// Kita isi data awal (Dummy) supaya dashboard tidak kosong pas pertama buka
+	initialData := []models.Reading{}
+	if db == nil {
+		initialData = []models.Reading{
+			{Classification: "Normal", CreatedAt: time.Now()},
+			{Classification: "Normal", CreatedAt: time.Now()},
+			{Classification: "Osteopenia", CreatedAt: time.Now()},
+		}
+	}
+
+	return &ReadingRepository{
+		db:           db,
+		mockReadings: initialData,
+	}
 }
 
-// ReadingRepo defines methods used by services and tests.
 type ReadingRepo interface {
 	CreateReading(ctx context.Context, rd *models.Reading) (string, error)
 	GetStats(ctx context.Context) (int, map[string]int, error)
 }
 
-// CreateReading inserts a reading; if db is nil this returns a generated Mock ID.
 func (r *ReadingRepository) CreateReading(ctx context.Context, rd *models.Reading) (string, error) {
-	// JIKA DB TIDAK KONEK (NIL): Generate Dummy ID agar Mobile App happy
+	// MODE MOCK (DB MATI)
 	if r.db == nil {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		// Generate ID
 		b := make([]byte, 16)
-		if _, err := rand.Read(b); err != nil {
-			return "", err
+		rand.Read(b)
+		rd.ID = hex.EncodeToString(b)
+
+		// Kalau timestamp kosong, isi sekarang
+		if rd.CreatedAt.IsZero() {
+			rd.CreatedAt = time.Now()
 		}
-		mockID := hex.EncodeToString(b)
-		return mockID, nil
+
+		// SIMPAN KE MEMORI (RAM)
+		r.mockReadings = append(r.mockReadings, *rd)
+
+		return rd.ID, nil
 	}
 
-	// JIKA DB KONEK: Lakukan Insert sesungguhnya
+	// MODE REAL DB
 	db, ok := r.db.(*sql.DB)
 	if !ok {
 		return "", errors.New("unsupported db type")
@@ -55,24 +83,52 @@ func (r *ReadingRepository) CreateReading(ctx context.Context, rd *models.Readin
 	return id, nil
 }
 
-// GetStats returns total scans today and counts grouped by classification
 func (r *ReadingRepository) GetStats(ctx context.Context) (int, map[string]int, error) {
+	// MODE MOCK (HITUNG DARI MEMORI)
 	if r.db == nil {
-		// Mock Data Stats untuk Dashboard
-		return 15, map[string]int{"Normal": 10, "Osteopenia": 3, "Osteoporosis": 2}, nil
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		totalToday := 0
+		stats := map[string]int{
+			"Normal":       0,
+			"Osteopenia":   0,
+			"Osteoporosis": 0,
+		}
+
+		// Mulai hitung jam 00:00 hari ini
+		now := time.Now()
+		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+		for _, reading := range r.mockReadings {
+			// Hanya hitung data hari ini
+			if reading.CreatedAt.After(startOfDay) || reading.CreatedAt.Equal(startOfDay) {
+				totalToday++
+				// Normalisasi string (biar "osteoporosis" dan "Osteoporosis" sama)
+				classKey := strings.Title(strings.ToLower(reading.Classification))
+				if _, exists := stats[classKey]; exists {
+					stats[classKey]++
+				} else {
+					// Fallback kalau ada klasifikasi aneh
+					stats[classKey] = 1
+				}
+			}
+		}
+
+		return totalToday, stats, nil
 	}
+
+	// MODE REAL DB
 	db, ok := r.db.(*sql.DB)
 	if !ok {
 		return 0, nil, errors.New("unsupported db type")
 	}
 
 	var total int
-	// Hitung total hari ini
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM readings WHERE created_at >= date_trunc('day', now())`).Scan(&total); err != nil {
 		return 0, nil, err
 	}
 
-	// Hitung breakdown per klasifikasi
 	rows, err := db.QueryContext(ctx, `SELECT classification, COUNT(*) FROM readings WHERE created_at >= date_trunc('day', now()) GROUP BY classification`)
 	if err != nil {
 		return 0, nil, err

@@ -1,12 +1,29 @@
 package database
 
-import "context"
+import (
+	"context"
+	"database/sql"
 
-// Connect is a light stub that returns nil. In production replace with real
-// pgxpool connection. Returning nil allows the app to run in environments
-// without Postgres for smoke tests.
+	_ "github.com/jackc/pgx/v5/stdlib"
+)
+
+// Connect opens a *sql.DB using the pgx stdlib driver and returns it as
+// an interface{} to preserve the existing function signature used by the
+// rest of the application. Callers should type-assert to *sql.DB.
 func Connect(ctx context.Context, url string) (interface{}, error) {
-    _ = ctx
-    _ = url
-    return nil, nil
+	_ = ctx
+
+	// Use the pgx stdlib driver registered under the name "pgx".
+	db, err := sql.Open("pgx", url)
+	if err != nil {
+		return nil, err
+	}
+
+	// Optionally verify connection now
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return db, nil
 }

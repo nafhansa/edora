@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"database/sql" // <--- TAMBAHAN PENTING
 	"log"
 	"os"
-	"time"
 
 	"edora/backend/internal/handler"
 	"edora/backend/internal/repository"
@@ -14,81 +12,96 @@ import (
 	"edora/backend/pkg/database"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 )
 
 func main() {
-	// Load envs
+	// 1. Load Environment Variables
 	dbURL := os.Getenv("DB_URL")
 	if dbURL == "" {
-		dbURL = "postgres://user:pass@db:5432/appdb"
+		dbURL = "postgres://user:pass@db:5432/appdb?sslmode=disable"
 	}
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		redisAddr = "redis:6379"
-	}
-
-	ctx := context.Background()
-
-	// Connect to Postgres (stubbed in this build)
-	pgconn, err := database.Connect(ctx, dbURL)
-	if err != nil {
-		log.Printf("postgres connect error: %v", err)
-	}
-
-	// Redis/client is optional; we run without Redis in smoke tests.
-
-	// legacy file-store removed; using repository/service pattern
-
-	app := fiber.New()
-
-	// Initialize repositories and services (pgconn may be nil in smoke tests)
-	readingRepo := repository.NewReadingRepository(pgconn)
-	deviceRepo := repository.NewDeviceRepository(pgconn)
-	patientRepo := repository.NewPatientRepository(pgconn)
-
-	readingSvc := service.NewReadingService(readingRepo, deviceRepo)
-	dashboardSvc := service.NewDashboardService(readingRepo, deviceRepo)
-	patientSvc := service.NewPatientService(patientRepo)
-	deviceSvc := service.NewDeviceService(deviceRepo)
-
-	// auth & handlers
-	auth := handler.NewAuthHandler()
-	// HTTP handlers for new APIs
-	readingHandler := handler.NewReadingHandler(readingSvc)
-	dashHTTP := handler.NewDashboardHTTPHandler(dashboardSvc)
-	patientHandler := handler.NewPatientHandler(patientSvc)
-	deviceHandler := handler.NewDeviceHandler(deviceSvc)
-
-	api := app.Group("/api/v1")
-	api.Post("/login", auth.Login)
-	// product APIs removed per refactor
-	api.Post("/sync/reading", readingHandler.SyncReading)
-	api.Get("/dashboard/stats", dashHTTP.Stats)
-
-	// Patient & Device management
-	api.Get("/patients", patientHandler.List)
-	api.Post("/patients", patientHandler.Create)
-	api.Get("/devices", deviceHandler.List)
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	// Print simple health info
-	info := map[string]string{"status": "ok", "port": port}
-	b, _ := json.Marshal(info)
-	fmt.Printf("Starting backend: %s\n", string(b))
+	ctx := context.Background()
 
-	// Start server
-	go func() {
-		if err := app.Listen(":" + port); err != nil {
-			log.Fatalf("failed to start server: %v", err)
-		}
-	}()
+	// 2. Connect to Postgres (DATABASE ASLI) 🔌
+	log.Println("🔌 Menghubungkan ke Database...", dbURL)
+	pgconn, err := database.Connect(ctx, dbURL)
+	if err != nil {
+		log.Fatalf("❌ FATAL: Gagal connect ke Database: %v\nCek apakah container 'db' sudah nyala?", err)
+	}
+	log.Println("✅ Berhasil terhubung ke Database Postgres!")
 
-	// Block until terminated or error
-	for {
-		time.Sleep(10 * time.Second)
+	// ---------------------------------------------------------
+	// 🔥 PERBAIKAN UTAMA DI SINI (TYPE ASSERTION) 🔥
+	// Kita pastikan pgconn benar-benar *sql.DB sebelum dipakai
+	// ---------------------------------------------------------
+	sqlDB, ok := pgconn.(*sql.DB)
+	if !ok {
+		log.Fatal("❌ Error: pgconn bukan tipe *sql.DB yang valid")
+	}
+
+	// 3. Setup Fiber App
+	app := fiber.New(fiber.Config{
+		AppName: "Edora Health Backend",
+	})
+
+	app.Use(logger.New())
+	app.Use(recover.New())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept",
+	}))
+
+	// 4. Initialize Dependency Injection (Wiring)
+
+	// Repo lain mungkin masih pakai interface pgconn (biarkan dulu jika belum direfactor)
+	readingRepo := repository.NewReadingRepository(pgconn)
+	deviceRepo := repository.NewDeviceRepository(pgconn)
+
+	// Repo Patient SUDAH pakai sqlDB yang baru kita convert di atas
+	patientRepo := repository.NewPatientRepository(sqlDB)
+
+	// Service Layer
+	readingSvc := service.NewReadingService(readingRepo, deviceRepo)
+	dashboardSvc := service.NewDashboardService(readingRepo, deviceRepo)
+	patientSvc := service.NewPatientService(patientRepo)
+	deviceSvc := service.NewDeviceService(deviceRepo)
+
+	// Handler Layer
+	auth := handler.NewAuthHandler()
+	readingHandler := handler.NewReadingHandler(readingSvc)
+	dashHTTP := handler.NewDashboardHTTPHandler(dashboardSvc)
+	patientHandler := handler.NewPatientHandler(patientSvc)
+	deviceHandler := handler.NewDeviceHandler(deviceSvc)
+
+	// 5. Define Routes
+	api := app.Group("/api/v1")
+
+	// Auth
+	api.Post("/login", auth.Login)
+
+	// Dashboard & IoT Sync
+	api.Post("/sync/reading", readingHandler.SyncReading)
+	api.Get("/dashboard/stats", dashHTTP.Stats)
+
+	// Patient Management (CRUD)
+	api.Get("/patients", patientHandler.List)
+	api.Post("/patients", patientHandler.Create)
+
+	// Device Management
+	api.Get("/devices", deviceHandler.List)
+
+	// 6. Start Server
+	log.Printf("🚀 Server Edora berjalan di port %s", port)
+	if err := app.Listen(":" + port); err != nil {
+		log.Fatalf("failed to start server: %v", err)
 	}
 }
