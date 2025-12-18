@@ -5,7 +5,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - DB_URL=postgres://user:pass@db:5432/appdb
+      - DB_URL=postgres://user:pass@db:5432/edora
       - REDIS_ADDR=redis:6379
     depends_on:
       - db

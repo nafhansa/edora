@@ -1,8 +1,6 @@
-package repository
-
 //go:build ignore
-// This repository was removed during refactor. Kept only for history.
+// +build ignore
 
 package repository
 
-// product repository removed
+// product repository removed (file kept for history)
