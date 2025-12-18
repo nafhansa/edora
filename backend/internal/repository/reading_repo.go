@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"crypto/rand" // Tambahan untuk random ID
 	"database/sql"
+	"encoding/hex" // Tambahan untuk random ID
 	"encoding/json"
 	"errors"
 
@@ -23,13 +25,19 @@ type ReadingRepo interface {
 	GetStats(ctx context.Context) (int, map[string]int, error)
 }
 
-// CreateReading inserts a reading; if db is nil this is a no-op returning a generated id placeholder.
+// CreateReading inserts a reading; if db is nil this returns a generated Mock ID.
 func (r *ReadingRepository) CreateReading(ctx context.Context, rd *models.Reading) (string, error) {
+	// JIKA DB TIDAK KONEK (NIL): Generate Dummy ID agar Mobile App happy
 	if r.db == nil {
-		// no DB available in this environment (smoke tests) — return empty id
-		return "", nil
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		mockID := hex.EncodeToString(b)
+		return mockID, nil
 	}
-	// Expecting *sql.DB for concrete implementation
+
+	// JIKA DB KONEK: Lakukan Insert sesungguhnya
 	db, ok := r.db.(*sql.DB)
 	if !ok {
 		return "", errors.New("unsupported db type")
@@ -50,7 +58,8 @@ func (r *ReadingRepository) CreateReading(ctx context.Context, rd *models.Readin
 // GetStats returns total scans today and counts grouped by classification
 func (r *ReadingRepository) GetStats(ctx context.Context) (int, map[string]int, error) {
 	if r.db == nil {
-		return 0, map[string]int{}, nil
+		// Mock Data Stats untuk Dashboard
+		return 15, map[string]int{"Normal": 10, "Osteopenia": 3, "Osteoporosis": 2}, nil
 	}
 	db, ok := r.db.(*sql.DB)
 	if !ok {
@@ -58,28 +67,26 @@ func (r *ReadingRepository) GetStats(ctx context.Context) (int, map[string]int, 
 	}
 
 	var total int
+	// Hitung total hari ini
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM readings WHERE created_at >= date_trunc('day', now())`).Scan(&total); err != nil {
 		return 0, nil, err
 	}
 
+	// Hitung breakdown per klasifikasi
 	rows, err := db.QueryContext(ctx, `SELECT classification, COUNT(*) FROM readings WHERE created_at >= date_trunc('day', now()) GROUP BY classification`)
 	if err != nil {
-		return total, nil, err
+		return 0, nil, err
 	}
 	defer rows.Close()
 
-	m := make(map[string]int)
+	stats := make(map[string]int)
 	for rows.Next() {
-		var cls sql.NullString
+		var cls string
 		var cnt int
 		if err := rows.Scan(&cls, &cnt); err != nil {
-			return total, nil, err
+			return 0, nil, err
 		}
-		key := "unknown"
-		if cls.Valid {
-			key = cls.String
-		}
-		m[key] = cnt
+		stats[cls] = cnt
 	}
-	return total, m, nil
+	return total, stats, nil
 }

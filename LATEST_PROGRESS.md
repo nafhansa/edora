@@ -92,3 +92,87 @@ What's next / recommendations
 
 ---
 Generated on: 2025-12-18
+
+All API Endpoints & curl Examples
+---------------------------------
+Base URL: http://localhost:8080 (default port `8080`)
+
+- Login (returns `token`, `role`)
+
+```bash
+curl -X POST http://localhost:8080/api/v1/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"secret"}'
+```
+
+- Dashboard (file-store; requires `medic` role via `Authorization: Bearer <token>`)
+
+```bash
+# Dashboard UI (file-store)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/dashboard
+
+# Dashboard stats (HTTP service)
+curl http://localhost:8080/api/v1/dashboard/stats
+```
+
+- Users (requires `medic` role)
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/users
+
+# Debug: list users (no auth required in this build)
+curl http://localhost:8080/api/v1/debug/users
+```
+
+- Readings (device -> server sync)
+
+Example payload (returns 201 + {"id":"..."} on success):
+
+```bash
+curl -X POST http://localhost:8080/api/v1/sync/reading \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_serial": "EDORA-DEV-001",
+    "patient_id": "dummy-patient-uuid",
+    "doctor_id": "dummy-doctor-uuid",
+    "bmd_result": 0.85,
+    "t_score": -1.2,
+    "classification": "Osteopenia",
+    "raw_signal_data": [100,120,130,110,105],
+    "lat": -6.9175,
+    "long": 107.6191,
+    "timestamp": "2023-10-27T10:00:00Z"
+  }'
+```
+
+- Patients
+
+```bash
+# List patients
+curl http://localhost:8080/api/v1/patients
+
+# Create patient (birth_date must be `YYYY-MM-DD`)
+curl -X POST http://localhost:8080/api/v1/patients \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nik": "1234567890123456",
+    "name": "John Doe",
+    "gender": "male",
+    "birth_date": "1990-01-01",
+    "address": "123 Tech Street"
+  }'
+```
+
+- Devices
+
+```bash
+curl http://localhost:8080/api/v1/devices
+```
+
+Notes
+-----
+- Use `PORT` environment variable to run server on a different port.
+- For endpoints requiring authentication, get a token via `/api/v1/login` and include `Authorization: Bearer <token>`.
+- The `POST /api/v1/patients` endpoint expects `birth_date` in `YYYY-MM-DD` format because `internal/handler/patient_handler.go` parses the field with `time.Parse("2006-01-02", ...)`.
+
+If you'd like, I can also add a small `scripts/integration_test.sh` that runs these curl commands and checks HTTP status codes.

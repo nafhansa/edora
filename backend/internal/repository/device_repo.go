@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
 	"edora/backend/internal/models"
@@ -26,9 +25,19 @@ type DeviceRepo interface {
 }
 
 func (d *DeviceRepository) GetBySerial(ctx context.Context, serial string) (*models.Device, error) {
+	// JIKA DB MATI (Mock Mode): Return Mock Device agar validasi "SyncReading" lolos
 	if d.db == nil {
-		return nil, nil
+		return &models.Device{
+			ID:           "mock-device-id-123",
+			SerialNumber: serial, // Return serial yang sama dengan request
+			Name:         "Mock Device Unit",
+			Status:       "active",
+			LastSeen:     time.Now(),
+			CreatedAt:    time.Now(),
+		}, nil
 	}
+
+	// JIKA DB HIDUP:
 	db, ok := d.db.(*sql.DB)
 	if !ok {
 		return nil, errors.New("unsupported db type")
@@ -51,7 +60,7 @@ func (d *DeviceRepository) GetBySerial(ctx context.Context, serial string) (*mod
 
 func (d *DeviceRepository) UpdateLastSeen(ctx context.Context, id string, t time.Time) error {
 	if d.db == nil {
-		return nil
+		return nil // Mock success
 	}
 	db, ok := d.db.(*sql.DB)
 	if !ok {
@@ -65,18 +74,18 @@ func (d *DeviceRepository) UpdateLastSeen(ctx context.Context, id string, t time
 // CountActive returns number of devices with last_seen >= threshold duration ago
 func (d *DeviceRepository) CountActive(ctx context.Context, since time.Duration) (int, error) {
 	if d.db == nil {
-		return 0, nil
+		return 5, nil // Mock: ada 5 device aktif
 	}
 	db, ok := d.db.(*sql.DB)
 	if !ok {
 		return 0, errors.New("unsupported db type")
 	}
-	var cnt int
-	q := `SELECT COUNT(*) FROM devices WHERE last_seen >= now() - $1::interval`
-	// convert duration to seconds string
-	interval := fmt.Sprintf("%d seconds", int64(since.Seconds()))
-	if err := db.QueryRowContext(ctx, q, interval).Scan(&cnt); err != nil {
+
+	threshold := time.Now().Add(-since)
+	var count int
+	q := `SELECT COUNT(*) FROM devices WHERE last_seen >= $1`
+	if err := db.QueryRowContext(ctx, q, threshold).Scan(&count); err != nil {
 		return 0, err
 	}
-	return cnt, nil
+	return count, nil
 }

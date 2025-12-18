@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"time"
 
 	"edora/backend/internal/handler"
 	"edora/backend/internal/repository"
 	"edora/backend/internal/service"
-	"edora/backend/internal/store"
 	"edora/backend/pkg/database"
 
 	"github.com/gofiber/fiber/v2"
@@ -39,14 +37,7 @@ func main() {
 
 	// Redis/client is optional; we run without Redis in smoke tests.
 
-	// Initialize store (file-based) for users/readings
-	exePath, _ := os.Executable()
-	exeDir := filepath.Dir(exePath)
-	dataDir := filepath.Join(exeDir, "data")
-	st, serr := store.New(dataDir)
-	if serr != nil {
-		log.Printf("store init error: %v", serr)
-	}
+	// legacy file-store removed; using repository/service pattern
 
 	app := fiber.New()
 
@@ -60,9 +51,8 @@ func main() {
 	patientSvc := service.NewPatientService(patientRepo)
 	deviceSvc := service.NewDeviceService(deviceRepo)
 
-	// auth & dashboard handlers (file-store backed)
-	auth := handler.NewAuthHandler(st)
-	dash := handler.NewDashboardHandler(st, auth)
+	// auth & handlers
+	auth := handler.NewAuthHandler()
 	// HTTP handlers for new APIs
 	readingHandler := handler.NewReadingHandler(readingSvc)
 	dashHTTP := handler.NewDashboardHTTPHandler(dashboardSvc)
@@ -71,16 +61,6 @@ func main() {
 
 	api := app.Group("/api/v1")
 	api.Post("/login", auth.Login)
-	api.Get("/dashboard", dash.GetDashboard)
-	api.Get("/users", dash.GetUsers)
-	api.Get("/debug/users", func(c *fiber.Ctx) error {
-		us := st.Users()
-		return c.JSON(us)
-	})
-	api.Post("/debug/users", func(c *fiber.Ctx) error {
-		us := st.Users()
-		return c.JSON(us)
-	})
 	// product APIs removed per refactor
 	api.Post("/sync/reading", readingHandler.SyncReading)
 	api.Get("/dashboard/stats", dashHTTP.Stats)
