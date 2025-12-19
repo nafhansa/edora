@@ -22,3 +22,11 @@ func (s *PatientService) CreatePatient(ctx context.Context, pt *models.Patient) 
 func (s *PatientService) ListPatients(ctx context.Context) ([]models.Patient, error) {
 	return s.repo.ListPatients(ctx)
 }
+
+func (s *PatientService) UpdatePatient(ctx context.Context, pt *models.Patient) error {
+	return s.repo.UpdatePatient(ctx, pt)
+}
+
+func (s *PatientService) DeletePatient(ctx context.Context, id string) error {
+	return s.repo.DeletePatient(ctx, id)
+}

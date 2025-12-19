@@ -97,3 +97,27 @@ func (r *PatientRepository) ListPatients(ctx context.Context) ([]models.Patient,
 
 	return patients, nil
 }
+
+func (r *PatientRepository) UpdatePatient(ctx context.Context, p *models.Patient) error {
+	p.UpdatedAt = time.Now()
+	query := `
+		UPDATE patients
+		SET nik = $1, name = $2, gender = $3, birth_date = $4, address = $5, updated_at = $6
+		WHERE id = $7
+	`
+	_, err := r.db.ExecContext(ctx, query,
+		p.NIK,
+		p.Name,
+		p.Gender,
+		p.BirthDate,
+		p.Address,
+		p.UpdatedAt,
+		p.ID,
+	)
+	return err
+}
+
+func (r *PatientRepository) DeletePatient(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM patients WHERE id = $1`, id)
+	return err
+}

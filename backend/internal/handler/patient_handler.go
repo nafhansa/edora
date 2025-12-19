@@ -74,3 +74,47 @@ func (h *PatientHandler) List(c *fiber.Ctx) error {
 	}
 	return c.JSON(pts)
 }
+
+// Update handles updating an existing patient
+func (h *PatientHandler) Update(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "patient id required"})
+	}
+
+	var req createPatientRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body: " + err.Error()})
+	}
+
+	parsedDate, err := time.Parse("2006-01-02", req.BirthDate)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid date format, use YYYY-MM-DD"})
+	}
+
+	pt := models.Patient{
+		ID:        id,
+		NIK:       req.NIK,
+		Name:      req.Name,
+		Gender:    req.Gender,
+		BirthDate: parsedDate,
+		Address:   req.Address,
+	}
+
+	if err := h.svc.UpdatePatient(context.Background(), &pt); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// Delete handles removing a patient and cascade removing medical records
+func (h *PatientHandler) Delete(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "patient id required"})
+	}
+	if err := h.svc.DeletePatient(context.Background(), id); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}

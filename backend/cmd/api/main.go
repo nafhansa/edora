@@ -97,6 +97,8 @@ func main() {
 	// Patient Management (CRUD)
 	api.Get("/patients", patientHandler.List)
 	api.Post("/patients", patientHandler.Create)
+	api.Put("/patients/:id", patientHandler.Update)
+	api.Delete("/patients/:id", patientHandler.Delete)
 
 	// Medical Records (scan)
 	api.Post("/medical_records", readingHandler.CreateMedicalRecord)
