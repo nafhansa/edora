@@ -64,3 +64,59 @@ func (h *ReadingHandler) SyncReading(c *fiber.Ctx) error {
 	}
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"id": id})
 }
+
+// --- FUNGSI LOGIKA DIAGNOSIS (Sesuai Standar WHO) ---
+func determineDiagnosis(score float64) string {
+	if score >= -1.0 {
+		return "Normal"
+	} else if score > -2.5 {
+		return "Osteopenia"
+	}
+	return "Osteoporosis"
+}
+
+// CreateMedicalRecord handler untuk menyimpan hasil scan/medical record
+func (h *ReadingHandler) CreateMedicalRecord(c *fiber.Ctx) error {
+	var input models.MedicalRecord
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+
+	// If client posted to /patients/:id/medical_records without patient_id in body,
+	// allow using the path parameter as the patient id.
+	if input.PatientID == "" {
+		if pid := c.Params("id"); pid != "" {
+			input.PatientID = pid
+		}
+	}
+
+	// 1. Hitung diagnosis otomatis
+	input.Diagnosis = determineDiagnosis(input.TScore)
+	if input.ScanDate.IsZero() {
+		input.ScanDate = time.Now().UTC()
+	}
+
+	// 2. Simpan via service
+	mr, err := h.rs.CreateMedicalRecord(context.Background(), &input)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.Status(fiber.StatusCreated).JSON(mr)
+}
+
+// GetPatientRecords handler untuk melihat riwayat scan pasien
+func (h *ReadingHandler) GetPatientRecords(c *fiber.Ctx) error {
+	patientID := c.Params("id")
+	if patientID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "patient id required"})
+	}
+
+	records, err := h.rs.GetPatientRecords(context.Background(), patientID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if records == nil {
+		records = []models.MedicalRecord{}
+	}
+	return c.Status(fiber.StatusOK).JSON(records)
+}

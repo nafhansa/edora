@@ -76,7 +76,9 @@ func main() {
 	deviceSvc := service.NewDeviceService(deviceRepo)
 
 	// Handler Layer
-	auth := handler.NewAuthHandler()
+	// User repository + auth handler
+	userRepo := repository.NewUserRepository(sqlDB)
+	auth := handler.NewAuthHandler(userRepo)
 	readingHandler := handler.NewReadingHandler(readingSvc)
 	dashHTTP := handler.NewDashboardHTTPHandler(dashboardSvc)
 	patientHandler := handler.NewPatientHandler(patientSvc)
@@ -95,6 +97,12 @@ func main() {
 	// Patient Management (CRUD)
 	api.Get("/patients", patientHandler.List)
 	api.Post("/patients", patientHandler.Create)
+
+	// Medical Records (scan)
+	api.Post("/medical_records", readingHandler.CreateMedicalRecord)
+	api.Get("/patients/:id/medical_records", readingHandler.GetPatientRecords)
+	// Allow creating medical record via patient-scoped route as well
+	api.Post("/patients/:id/medical_records", readingHandler.CreateMedicalRecord)
 
 	// Device Management
 	api.Get("/devices", deviceHandler.List)

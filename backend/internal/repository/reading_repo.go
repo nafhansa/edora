@@ -17,8 +17,9 @@ import (
 type ReadingRepository struct {
 	db interface{}
 	// --- SMART MOCK STORAGE ---
-	mu           sync.Mutex
-	mockReadings []models.Reading
+	mu                 sync.Mutex
+	mockReadings       []models.Reading
+	mockMedicalRecords []models.MedicalRecord
 }
 
 func NewReadingRepository(db interface{}) *ReadingRepository {
@@ -32,15 +33,26 @@ func NewReadingRepository(db interface{}) *ReadingRepository {
 		}
 	}
 
+	// contoh data medical record mock
+	initialMR := []models.MedicalRecord{}
+	if db == nil {
+		initialMR = []models.MedicalRecord{
+			{ID: 1, PatientID: "patient-1", TScore: -0.5, Diagnosis: "Normal", ScanDate: time.Now(), Notes: "demo"},
+		}
+	}
+
 	return &ReadingRepository{
-		db:           db,
-		mockReadings: initialData,
+		db:                 db,
+		mockReadings:       initialData,
+		mockMedicalRecords: initialMR,
 	}
 }
 
 type ReadingRepo interface {
 	CreateReading(ctx context.Context, rd *models.Reading) (string, error)
 	GetStats(ctx context.Context) (int, map[string]int, error)
+	CreateMedicalRecord(ctx context.Context, mr *models.MedicalRecord) (int, error)
+	GetPatientRecords(ctx context.Context, patientID string) ([]models.MedicalRecord, error)
 }
 
 func (r *ReadingRepository) CreateReading(ctx context.Context, rd *models.Reading) (string, error) {
@@ -145,4 +157,76 @@ func (r *ReadingRepository) GetStats(ctx context.Context) (int, map[string]int, 
 		stats[cls] = cnt
 	}
 	return total, stats, nil
+}
+
+// CreateMedicalRecord menyimpan record medis (mock atau DB)
+func (r *ReadingRepository) CreateMedicalRecord(ctx context.Context, mr *models.MedicalRecord) (int, error) {
+	if r.db == nil {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		id := len(r.mockMedicalRecords) + 1
+		mr.ID = id
+		if mr.ScanDate.IsZero() {
+			mr.ScanDate = time.Now()
+		}
+		r.mockMedicalRecords = append(r.mockMedicalRecords, *mr)
+		return id, nil
+	}
+
+	db, ok := r.db.(*sql.DB)
+	if !ok {
+		return 0, errors.New("unsupported db type")
+	}
+
+	q := `INSERT INTO medical_records (patient_id, t_score, diagnosis, notes, scan_date) VALUES ($1,$2,$3,$4,$5) RETURNING id, scan_date`
+	if mr.ScanDate.IsZero() {
+		mr.ScanDate = time.Now()
+	}
+	var id int
+	var scanDate time.Time
+	if err := db.QueryRowContext(ctx, q, mr.PatientID, mr.TScore, mr.Diagnosis, mr.Notes, mr.ScanDate).Scan(&id, &scanDate); err != nil {
+		return 0, err
+	}
+	mr.ID = id
+	mr.ScanDate = scanDate
+	return id, nil
+}
+
+// GetPatientRecords mengambil riwayat medical records untuk pasien
+func (r *ReadingRepository) GetPatientRecords(ctx context.Context, patientID string) ([]models.MedicalRecord, error) {
+	if r.db == nil {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		out := []models.MedicalRecord{}
+		for _, mr := range r.mockMedicalRecords {
+			if mr.PatientID == patientID {
+				out = append(out, mr)
+			}
+		}
+		return out, nil
+	}
+
+	db, ok := r.db.(*sql.DB)
+	if !ok {
+		return nil, errors.New("unsupported db type")
+	}
+
+	rows, err := db.QueryContext(ctx, `SELECT id, t_score, diagnosis, scan_date, notes FROM medical_records WHERE patient_id = $1 ORDER BY scan_date DESC`, patientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []models.MedicalRecord
+	for rows.Next() {
+		var rcd models.MedicalRecord
+		rcd.PatientID = patientID
+		if err := rows.Scan(&rcd.ID, &rcd.TScore, &rcd.Diagnosis, &rcd.ScanDate, &rcd.Notes); err != nil {
+			continue
+		}
+		records = append(records, rcd)
+	}
+	return records, nil
 }

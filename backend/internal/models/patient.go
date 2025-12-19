@@ -14,3 +14,12 @@ type Patient struct {
 	// Tambahkan baris ini agar error hilang:
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
+
+type MedicalRecord struct {
+	ID        int       `json:"id"`
+	PatientID string    `json:"patient_id"` 
+	TScore    float64   `json:"t_score"`
+	Diagnosis string    `json:"diagnosis"`
+	ScanDate  time.Time `json:"scan_date"`
+	Notes     string    `json:"notes"`
+}

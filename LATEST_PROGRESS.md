@@ -1,178 +1,131 @@
-LATEST PROGRESS
-===============
+LATEST PROGRESS (concise)
+=========================
 
 Summary
 -------
-- Status: Development server rebuilt and running (you reported a successful POST returning an `id`).
-- Recent fix: `internal/handler/patient_handler.go` was updated to use a DTO (`createPatientRequest`) that accepts `BirthDate` as a `string`, and parses it with `time.Parse` into the model’s `time.Time` field before saving. This resolves the previous JSON date parsing error.
+- Status: development server rebuilt and running; example POSTs returned an `id`.
+- Recent fix: `internal/handler/patient_handler.go` now accepts `birth_date` as `"YYYY-MM-DD"` and parses it to `time.Time`.
 
-Files touched / area of change
+What changed
+------------
+- Patient creation: DTO + `time.Parse("2006-01-02", ...)` to fix JSON date parsing.
+- New endpoints added for storing and retrieving medical scan records.
+
+Key routes (prefix `/api/v1`)
 -----------------------------
-- `internal/handler/patient_handler.go` — DTO and parsing logic for patient creation (birth date string -> `time.Time`).
-- (Existing handlers) `internal/handler/` contains other handlers: `auth_handler.go`, `dashboard_handler.go`, `device_handler.go`, `product_handler.go`, `reading_handler.go`.
+LATEST PROGRESS — DETAILED FILE MAP
+=================================
 
-Main API endpoints (project conventions)
-----------------------------------------
-- Patients: POST /api/v1/patients (create), GET /api/v1/patients (list)
-- Devices:  /api/v1/devices
-- Products: /api/v1/products
-- Readings: /api/v1/readings
-- Dashboard: /api/v1/dashboard or /api/v1/dashboard/stats (aggregated endpoints)
+Overview
+--------
+- Status: development server rebuilt and running. Key fixes and new endpoints added (patient birth date parsing, medical record handlers).
+- This document lists important files, their locations, and a short description of purpose to help navigation and maintenance.
 
-Note: Routes use the `/api/v1/` prefix (the `POST /api/v1/patients` endpoint was successfully exercised).
+Project root (important files)
+------------------------------
+- `docker-compose.yml` — Docker Compose config for services (backend, db, frontend etc.).
+- `README.md` — project overview and setup notes.
+- `LATEST_PROGRESS.md` — this file (progress + file map and quick commands).
 
-Environment (reset & rebuild) — commands to run from project root
------------------------------------------------------------------
-Run the following chain to stop running containers, rebuild images with latest code, and start in background:
+Backend: `backend/` (Go)
+------------------------
+- `backend/cmd/api/main.go` — Application entry point. Creates Fiber app, wires repositories, services and handlers, and registers routes under `/api/v1`.
+- `backend/go.mod` — Go module manifest.
+
+Backend: internal packages
+--------------------------
+- `backend/internal/handler/` — HTTP handlers (Fiber). Key files:
+  - `auth_handler.go`       — Authentication endpoints (login).
+  - `dashboard_handler.go`  — Dashboard UI serving + stats endpoints.
+  - `device_handler.go`     — Device listing and device-related endpoints.
+  - `patient_handler.go`    — Patient CRUD endpoints. Contains `createPatientRequest` DTO and `time.Parse` for `birth_date`.
+  - `reading_handler.go`    — Reading and scan handlers. Contains `SyncReading` for device sync; added `CreateMedicalRecord`, `GetPatientRecords`, and `determineDiagnosis` logic.
+  - `product_handler.go`    — Product endpoints (if applicable).
+
+- `backend/internal/models/` — Domain models used across repo. Key files:
+  - `patient.go`            — `Patient` struct and `MedicalRecord` struct (fields: `ID`, `PatientID`, `TScore`, `Diagnosis`, `ScanDate`, `Notes`).
+  - `reading.go`            — Reading model for IoT sync (t_score, classification, raw_signal_data, etc.).
+  - `device.go`, `user.go`  — Device and User models.
+
+- `backend/internal/repository/` — Repository layer (DB access). Key files:
+  - `reading_repo.go`       — Reading repository. Supports mock mode (in-memory) and real DB mode. Implements `CreateReading`, `GetStats`, and newly added `CreateMedicalRecord` and `GetPatientRecords`.
+  - `patient_repo.go`       — Patient repository (CRUD using SQL, returns UUID IDs).
+  - `device_repo.go`        — Device repository (GetBySerial, UpdateLastSeen, etc.).
+
+- `backend/internal/service/` — Business logic / use-cases. Key files:
+  - `reading_service.go`    — Coordinates device validation and reading persistence. Added service methods `CreateMedicalRecord` and `GetPatientRecords` to wrap repository.
+  - `patient_service.go`    — Patient-related business logic.
+  - `dashboard_service.go`  — Aggregation logic for stats.
+
+Backend: pkg and utilities
+--------------------------
+- `backend/pkg/database/db.go` — Database connection helper (Connect function returning DB connection).
+- `backend/pkg/redis/redis.go` — Redis helper (if used).
+
+Backend: SQL migrations and init
+-------------------------------
+- `backend/sql/init.sql` — (added) Schema initializer for Postgres. Creates `uuid-ossp` extension, `patients` table (UUID primary key), `medical_records` table (serial id, patient_id FK, t_score, diagnosis, notes, device_serial, raw_signal_data INTEGER[]), and indexes on `nik` and `patient_id`.
+- `backend/sql/migrations/` — existing migration files (e.g., `0001_create_edora_tables.up.sql.sql`, `0002_create_patients_devices_readings.sql`). Review and reconcile with `init.sql` before applying to production DB.
+
+Frontend
+--------
+- `frontend/` — React + Vite app.
+  - `frontend/src/main.jsx`, `App.jsx` — entry and main components.
+  - `frontend/src/App.css`, `index.css` — styles.
+  - `frontend/package.json` — frontend dependencies and scripts.
+
+Flutter (mobile)
+----------------
+- `flutter/` — Flutter app (if used).
+  - `lib/main.dart` — Flutter entry.
+  - `lib/models/reading_model.dart` — mobile model mirroring backend reading.
+  - `lib/services/api_service.dart` — client to backend API.
+
+Load testing
+------------
+- `k6/load-test.js` — k6 script for load testing endpoints.
+
+Quick commands (developer)
+-------------------------
+- Rebuild and run with Docker Compose (project root):
 
 ```bash
-# from /home/nafhan/Documents/projek/edora
 docker compose down && docker compose build --no-cache && docker compose up -d
 ```
 
-(You previously ran `docker compose up --build -d` and the server started successfully.)
-
-Integration test — POST /api/v1/patients
----------------------------------------
-Use this payload (the one that previously errored due to date parsing):
-
-```bash
-curl -X POST http://localhost:8080/api/v1/patients \
-  -H "Content-Type: application/json" \
-  -d '{
-    "nik": "1234567890123456",
-    "name": "John Doe",
-    "gender": "male",
-    "birth_date": "1990-01-01",
-    "address": "123 Tech Street"
-  }'
-```
-
-Expected result:
-- On success the API returns a JSON object with an `id` (example you saw: `{"id":"b74ac9451956cc5d3d9e9799a3a4a66c"}`) and HTTP 200/201.
-- If parsing fails, the response would be an error like `invalid body` or a 4xx with a JSON error message.
-
-Quick verification commands
----------------------------
-- List patients (if implemented):
-
-```bash
-curl http://localhost:8080/api/v1/patients
-```
-
-- Check server logs (docker-compose service name may be `backend`):
-
-```bash
-docker compose logs -f backend
-# or list containers to find name then:
-docker logs -f <container-name>
-```
-
-Unit tests (Go)
----------------
-To run Go unit tests in the backend (from repo root):
+- Build backend locally (no Docker):
 
 ```bash
 cd backend
-go test ./... 
+go build ./...
 ```
 
-Notes & tips
-------------
-- The fix in `patient_handler.go` converts the incoming `birth_date` string into a `time.Time` using `time.Parse("2006-01-02", payload.BirthDate)` (ISO date). Ensure clients send `YYYY-MM-DD` to match parsing format.
-- If you see timezone/format issues later, consider accepting RFC3339 or using a more flexible parser, but prefer strict ISO for API stability.
+- Run backend tests:
 
-What's next / recommendations
------------------------------
-- If you want, I can:
-  - Open and verify the exact `createPatientRequest` struct and the `time.Parse` call in `internal/handler/patient_handler.go` (confirm code lines).
-  - Add more example curl tests for devices, readings, and dashboard endpoints.
-  - Add a small integration test script (bash) to run the sequence and assert responses.
+```bash
+cd backend
+go test ./...
+```
 
+- Apply `init.sql` to Postgres (example using psql):
 
----
+```bash
+# from host where psql can reach the DB
+psql "postgres://user:pass@localhost:5432/appdb?sslmode=disable" -f backend/sql/init.sql
+```
+
+Notes & recommendations
+-----------------------
+- Consistency: handlers now reference `models.MedicalRecord` (package-qualified). If you add more models move them into `internal/models` and import consistently.
+- Database: `init.sql` creates both `patients` (UUID primary key) and `medical_records`. If you use existing migrations, merge carefully to avoid duplicate table definitions.
+- Indexes: `idx_patients_nik` and `idx_medical_records_patient_id` added for faster lookups; add more indexes later based on query patterns (e.g., `scan_date`).
+
+Next actions I can take
+----------------------
+1. Create a proper SQL migration file compatible with your migration tooling (flyway/liquibase/migrate).
+2. Add `scripts/integration_test.sh` to automatically run curl checks and assert HTTP statuses.
+3. Run the DB init against a running Postgres container and verify tables exist.
+
+If you want me to proceed with any of the next actions, tell me which one.
+
 Generated on: 2025-12-18
-
-All API Endpoints & curl Examples
----------------------------------
-Base URL: http://localhost:8080 (default port `8080`)
-
-- Login (returns `token`, `role`)
-
-```bash
-curl -X POST http://localhost:8080/api/v1/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"secret"}'
-```
-
-- Dashboard (file-store; requires `medic` role via `Authorization: Bearer <token>`)
-
-```bash
-# Dashboard UI (file-store)
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/dashboard
-
-# Dashboard stats (HTTP service)
-curl http://localhost:8080/api/v1/dashboard/stats
-```
-
-- Users (requires `medic` role)
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/users
-
-# Debug: list users (no auth required in this build)
-curl http://localhost:8080/api/v1/debug/users
-```
-
-- Readings (device -> server sync)
-
-Example payload (returns 201 + {"id":"..."} on success):
-
-```bash
-curl -X POST http://localhost:8080/api/v1/sync/reading \
-  -H "Content-Type: application/json" \
-  -d '{
-    "device_serial": "EDORA-DEV-001",
-    "patient_id": "dummy-patient-uuid",
-    "doctor_id": "dummy-doctor-uuid",
-    "bmd_result": 0.85,
-    "t_score": -1.2,
-    "classification": "Osteopenia",
-    "raw_signal_data": [100,120,130,110,105],
-    "lat": -6.9175,
-    "long": 107.6191,
-    "timestamp": "2023-10-27T10:00:00Z"
-  }'
-```
-
-- Patients
-
-```bash
-# List patients
-curl http://localhost:8080/api/v1/patients
-
-# Create patient (birth_date must be `YYYY-MM-DD`)
-curl -X POST http://localhost:8080/api/v1/patients \
-  -H "Content-Type: application/json" \
-  -d '{
-    "nik": "1234567890123456",
-    "name": "John Doe",
-    "gender": "male",
-    "birth_date": "1990-01-01",
-    "address": "123 Tech Street"
-  }'
-```
-
-- Devices
-
-```bash
-curl http://localhost:8080/api/v1/devices
-```
-
-Notes
------
-- Use `PORT` environment variable to run server on a different port.
-- For endpoints requiring authentication, get a token via `/api/v1/login` and include `Authorization: Bearer <token>`.
-- The `POST /api/v1/patients` endpoint expects `birth_date` in `YYYY-MM-DD` format because `internal/handler/patient_handler.go` parses the field with `time.Parse("2006-01-02", ...)`.
-
-If you'd like, I can also add a small `scripts/integration_test.sh` that runs these curl commands and checks HTTP status codes.

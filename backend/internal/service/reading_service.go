@@ -45,3 +45,17 @@ func (s *ReadingService) SyncReading(ctx context.Context, rd *models.Reading, de
 	_ = s.deviceRepo.UpdateLastSeen(ctx, dev.ID, rd.CreatedAt)
 	return id, nil
 }
+
+// CreateMedicalRecord membuat medical record baru melalui repository
+func (s *ReadingService) CreateMedicalRecord(ctx context.Context, mr *models.MedicalRecord) (*models.MedicalRecord, error) {
+	_, err := s.readingRepo.CreateMedicalRecord(ctx, mr)
+	if err != nil {
+		return nil, err
+	}
+	return mr, nil
+}
+
+// GetPatientRecords mengembalikan semua medical record untuk pasien
+func (s *ReadingService) GetPatientRecords(ctx context.Context, patientID string) ([]models.MedicalRecord, error) {
+	return s.readingRepo.GetPatientRecords(ctx, patientID)
+}
